@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pemindai QR - Simulasi E-Voting</title>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101827;color:#fff;font-family:Arial,sans-serif;padding:20px}
+main{max-width:520px;margin:0 auto;text-align:center}h2{font-size:22px}p{color:#d4dbe5;line-height:1.5}
+#cameraBox{position:relative;background:#000;border-radius:14px;overflow:hidden;min-height:260px;margin:18px 0}
+video{width:100%;display:block;min-height:260px;object-fit:cover}#guide{position:absolute;inset:18% 14%;border:3px solid #f6c453;border-radius:14px;box-shadow:0 0 0 999px #0004;pointer-events:none}
+button{border:0;border-radius:10px;padding:13px 18px;font-size:15px;font-weight:bold;background:#d43b31;color:white;cursor:pointer}
+#status{background:#243247;border-radius:10px;padding:12px;min-height:48px}.small{font-size:12px;color:#b8c3d2}
+</style></head>
+<body><main>
+<h2>SCAN MASTER QR CODE</h2>
+<p>Izinkan akses kamera pada browser, lalu arahkan QR master ke dalam kotak.</p>
+<div id="cameraBox"><video id="video" playsinline muted></video><div id="guide"></div></div>
+<p id="status">Menyiapkan kamera...</p>
+<button id="retry" onclick="startCamera()" hidden>Coba buka kamera lagi</button>
+<p class="small">Pemindai kamera berjalan pada halaman HTTPS terpisah. Hasil QR dikirim kembali ke aplikasi simulasi yang membukanya.</p>
+<canvas id="canvas" hidden></canvas>
+</main>
+<script>
+const video=document.getElementById('video'), statusEl=document.getElementById('status'), canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d',{willReadFrequently:true});
+let stream=null, raf=0, done=false;
+async function startCamera(){
+  done=false;document.getElementById('retry').hidden=true;
+  if(!window.isSecureContext){statusEl.textContent='Halaman pemindai harus dibuka melalui HTTPS.';document.getElementById('retry').hidden=false;return;}
+  if(!navigator.mediaDevices?.getUserMedia){statusEl.textContent='Browser ini tidak menyediakan akses kamera. Buka halaman melalui Chrome terbaru.';document.getElementById('retry').hidden=false;return;}
+  stopCamera();
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
+    video.srcObject=stream;await video.play();statusEl.textContent='Kamera aktif. Arahkan QR master ke kotak.';tick();
+  }catch(err){
+    const n=err?.name||'';
+    if(n==='NotAllowedError'||n==='PermissionDeniedError')statusEl.textContent='Izin kamera ditolak. Klik ikon gembok di address bar → Site settings → Camera → Allow, lalu muat ulang halaman.';
+    else if(n==='NotFoundError')statusEl.textContent='Kamera tidak ditemukan pada perangkat ini.';
+    else statusEl.textContent='Kamera gagal dibuka: '+(err?.message||n||'kesalahan tidak diketahui');
+    document.getElementById('retry').hidden=false;
+  }
+}
+function tick(){
+  if(done||!stream||video.readyState!==video.HAVE_ENOUGH_DATA){raf=requestAnimationFrame(tick);return;}
+  canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  const frame=ctx.getImageData(0,0,canvas.width,canvas.height);
+  const code=window.jsQR?jsQR(frame.data,frame.width,frame.height,{inversionAttempts:'attemptBoth'}):null;
+  if(code&&code.data){
+    done=true;statusEl.textContent='QR berhasil dibaca. Mengirim hasil ke aplikasi...';stopCamera();
+    const returnOrigin = new URLSearchParams(window.location.search).get('returnOrigin');
+    if(window.opener && !window.opener.closed && returnOrigin && /^https:\/\//i.test(returnOrigin)){
+      window.opener.postMessage({type:'EVOTING_QR_DECODED',token:code.data},returnOrigin);
+      setTimeout(()=>window.close(),700);
+    }
+    else statusEl.textContent='Aplikasi utama tidak ditemukan. Tutup tab ini dan buka pemindai dari aplikasi.';
+    return;
+  }
+  raf=requestAnimationFrame(tick);
+}
+function stopCamera(){if(raf)cancelAnimationFrame(raf);raf=0;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}}
+window.addEventListener('beforeunload',stopCamera);
+startCamera();
+</script></body></html>
